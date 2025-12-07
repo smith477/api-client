@@ -34,7 +34,7 @@ struct APIClientTests {
         URLProtocolStub.stubSuccess(expected)
 
         let endpoint = TestEndpoint(path: "/users/1")
-        let result: TestResponse = try await client.send(endpoint, responseType: TestResponse.self)
+        let result = try await client.send(endpoint) as TestResponse
 
         #expect(result == expected)
     }
@@ -49,7 +49,7 @@ struct APIClientTests {
         let endpoint = TestEndpoint(path: "/users/999")
 
         await #expect(throws: APIError.notFound) {
-            _ = try await client.send(endpoint, responseType: TestResponse.self)
+            _ = try await client.send(endpoint) as TestResponse
         }
     }
 
@@ -63,7 +63,7 @@ struct APIClientTests {
         let endpoint = TestEndpoint(path: "/protected")
 
         await #expect(throws: APIError.unauthorized) {
-            _ = try await client.send(endpoint, responseType: TestResponse.self)
+            _ = try await client.send(endpoint) as TestResponse
         }
     }
 
@@ -77,7 +77,7 @@ struct APIClientTests {
         let endpoint = TestEndpoint(path: "/broken")
 
         await #expect(throws: APIError.serverError(500)) {
-            _ = try await client.send(endpoint, responseType: TestResponse.self)
+            _ = try await client.send(endpoint) as TestResponse
         }
     }
 
@@ -100,7 +100,7 @@ struct APIClientTests {
         let endpoint = TestEndpoint(path: "/users/1")
 
         await #expect {
-            _ = try await client.send(endpoint, responseType: TestResponse.self)
+            _ = try await client.send(endpoint) as TestResponse
         } throws: { error in
             guard case .decodingFailed = error as? APIError else {
                 return false
@@ -122,7 +122,7 @@ struct MockAPIClientTests {
         await mock.stub("/users/42", with: expected)
 
         let endpoint = TestEndpoint(path: "/users/42")
-        let result: TestResponse = try await mock.send(endpoint, responseType: TestResponse.self)
+        let result: TestResponse = try await mock.send(endpoint) as TestResponse
 
         #expect(result == expected)
     }
@@ -136,7 +136,7 @@ struct MockAPIClientTests {
         let endpoint = TestEndpoint(path: "/fail")
 
         await #expect(throws: APIError.unauthorized) {
-            _ = try await mock.send(endpoint, responseType: TestResponse.self)
+            _ = try await mock.send(endpoint) as TestResponse
         }
     }
 
@@ -148,7 +148,7 @@ struct MockAPIClientTests {
         await mock.stub("/users/1", with: response)
 
         let endpoint = TestEndpoint(path: "/users/1")
-        _ = try await mock.send(endpoint, responseType: TestResponse.self)
+        _ = try await mock.send(endpoint) as TestResponse
 
         let didRequest = await mock.didRequest("/users/1")
         #expect(didRequest)

@@ -12,10 +12,7 @@ public actor MockAPIClient: APIClientProtocol {
 
     public init() {}
 
-    public func send<T: Decodable & Sendable>(
-        _ endpoint: Endpoint,
-        responseType _: T.Type
-    ) async throws -> T {
+    public func send<T: Decodable & Sendable>(_ endpoint: Endpoint) async throws(APIError) -> T {
         requestHistory.append(endpoint)
 
         if let error = errors[endpoint.path] {
@@ -27,14 +24,6 @@ public actor MockAPIClient: APIClientProtocol {
         }
 
         return response
-    }
-
-    public func send(_ endpoint: Endpoint) async throws {
-        requestHistory.append(endpoint)
-
-        if let error = errors[endpoint.path] {
-            throw error
-        }
     }
 
     // MARK: - Test Helpers

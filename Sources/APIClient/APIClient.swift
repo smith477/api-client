@@ -1,60 +1,69 @@
 // APIClient.swift
 
 import Foundation
-
-// MARK: - Protocol
+import OSLog
 
 public protocol APIClientProtocol: Sendable {
-    func send<T: Decodable & Sendable>(
-        _ endpoint: Endpoint,
-        responseType: T.Type
-    ) async throws -> T
-
-    func send(_ endpoint: Endpoint) async throws
+    func send<T: Decodable & Sendable>(_ endpoint: Endpoint) async throws(APIError) -> T
 }
-
-// MARK: - Live Implementation
 
 public actor APIClient: APIClientProtocol {
     private let baseURL: URL
     private let session: URLSession
     private let decoder: JSONDecoder
+    private let retryPolicy: RetryPolicy
+    private let logger: Logger
 
     public init(
         baseURL: URL,
         session: URLSession = .shared,
-        decoder: JSONDecoder = .init()
+        decoder: JSONDecoder = .init(),
+        retryPolicy: RetryPolicy = .default
     ) {
         self.baseURL = baseURL
         self.session = session
         self.decoder = decoder
+        self.retryPolicy = retryPolicy
+        self.logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "APIClient", category: "Network")
     }
 
-    public func send<T: Decodable & Sendable>(
-        _ endpoint: Endpoint,
-        responseType _: T.Type
-    ) async throws(APIError) -> T {
-        do {
-            let data = try await performRequest(endpoint)
-            return try decoder.decode(T.self, from: data)
-        } catch let error as APIError {
-            throw error
-        } catch {
-            throw APIError.decodingFailed(error.localizedDescription)
-        }
-    }
-
-    public func send(_ endpoint: Endpoint) async throws {
-        _ = try await performRequest(endpoint)
-    }
-
-    private func performRequest(_ endpoint: Endpoint) async throws -> Data {
+    public func send<T: Decodable & Sendable>(_ endpoint: Endpoint) async throws(APIError) -> T {
         let request: URLRequest
         do {
             request = try endpoint.urlRequest(baseURL: baseURL)
         } catch {
-            throw APIError.invalidURL
+            throw .invalidURL
         }
+
+        var lastError: APIError = .invalidResponse
+
+        for attempt in 0...retryPolicy.maxRetries {
+            if attempt > 0 {
+                let delay = retryPolicy.delay(for: attempt)
+                logger.info("Retry attempt \(attempt) after \(delay)s for \(endpoint.path)")
+                try? await Task.sleep(for: .seconds(delay))
+            }
+
+            do {
+                let data = try await performRequest(request, endpoint: endpoint)
+                return try decodeResponse(data)
+            } catch {
+                lastError = error
+
+                if !retryPolicy.shouldRetry(error) {
+                    throw error
+                }
+
+                logger.warning("Request failed: \(error.localizedDescription), will retry")
+            }
+        }
+
+        throw lastError
+    }
+
+    private func performRequest(_ request: URLRequest, endpoint: Endpoint) async throws(APIError) -> Data {
+        logger.debug("→ \(endpoint.method.rawValue) \(endpoint.path)")
+        let startTime = CFAbsoluteTimeGetCurrent()
 
         let data: Data
         let response: URLResponse
@@ -62,17 +71,31 @@ public actor APIClient: APIClientProtocol {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            throw APIError.networkError(error.localizedDescription)
+            logger.error("✗ Network error: \(error.localizedDescription)")
+            throw .networkError(error.localizedDescription)
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
+            throw .invalidResponse
         }
 
+        let duration = CFAbsoluteTimeGetCurrent() - startTime
+        logger.debug("← \(httpResponse.statusCode) \(endpoint.path) (\(String(format: "%.2f", duration))s)")
+
         if let error = APIError.fromStatusCode(httpResponse.statusCode, data: data) {
+            logger.error("✗ HTTP \(httpResponse.statusCode) for \(endpoint.path)")
             throw error
         }
 
         return data
+    }
+
+    private func decodeResponse<T: Decodable>(_ data: Data) throws(APIError) -> T {
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            logger.error("✗ Decoding failed: \(error.localizedDescription)")
+            throw .decodingFailed(error.localizedDescription)
+        }
     }
 }
